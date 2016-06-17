@@ -131,15 +131,15 @@ def read_vu_rooster(lines, debug=True):
             words = [''] + words
 
         # check contents:
-        time = '[0-9][0-9]*:[0-9][0-9]'
-        date = '[0-9][0-9]*/[0-9][0-9]*/[0-9][0-9]'
+        time_pattern = '[0-9][0-9]*:[0-9][0-9]'
+        date_pattern = '[0-9][0-9]*/[0-9][0-9]*/[0-9][0-9]'
         patterns = [ '',		# status (usually empty)
                      '[A-Z0-9_]*',	# course code X_405052
                      '([A-Z]|)[a-z][a-z]', # weekday, like 'di' or 'Tue'
-                     date,		# date 3/9/13
+                     date_pattern,	# date 3/9/13
                      '[0-9, -]*',	# week numbers 36-42, 44
-                     time,		# start time 13:30
-                     time,		# end time 15:15
+                     time_pattern,	# start time 13:30
+                     time_pattern,	# end time 15:15
                      '',		# course name free text
                      '',		# description free text
                      '[A-Z][A-Z]']	# type PR
@@ -206,14 +206,20 @@ def write_ical_event(outfile,
                                 Start, Einde, Vaknaam, Beschrijving, Type,
                                 Zalen, Docent, Opmerking )
     # check for weeks, can be 31-42 or '31-42, 44'
+    if debug: print Weken
     week_parts = Weken.split(', ')
     weken = []
     for week_part in week_parts:
+        if debug: print "Part", week_part
         try:
             startweek,endweek = ( int(w) for w in week_part.split('-') )
         except ValueError:
             startweek,endweek = int(week_part), int(week_part)
-        weken += range(startweek, endweek+1)
+        r=range(startweek, endweek+1)
+        if r==[]:
+            r=range(startweek, 52)+range(1,endweek+1)
+        if debug: print "Range:", r
+        weken += r
     
     print "SCHEDULE:", weken, "-",
     
@@ -222,7 +228,7 @@ def write_ical_event(outfile,
     end   = time2minutes(Einde)
     print " %s %s-%s %s" % (Dag,Start,Einde,Zalen)
     
-    print weken
+    if debug: print weken
     
     # get correct calendar year (schedule runs by academic year sept-aug)
     if weken[0] < (52+this_week-10)%52:
