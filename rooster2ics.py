@@ -1,6 +1,7 @@
 #!/usr/bin/python
 
 import sys
+import os
 import re
 import time
 
@@ -26,6 +27,8 @@ ics_day = {
     'su':'SU', 
     }
 
+global debug
+debug=False
 
 ######## COMMAND LINE / INPUT STUFF ##########
 
@@ -46,6 +49,9 @@ def parse_commandline():
     parser.add_option("-i", "--ics",   dest="icsfile", metavar="FILE",
                       help="ics file")
     parser.set_defaults(icsfile=None)
+    parser.add_option("-v", "--verbose", dest="debug", action="store_true",
+                     help="Output verbose debugging info (%default)")
+    parser.set_defaults(debug=False)
 
     # get the options:
     (options, args) = parser.parse_args()
@@ -74,10 +80,13 @@ def parse_commandline():
         
     # check if we have ics file:
     if options.icsfile == None:
-        parser.print_help()
-        print ""
-        print "ERROR: no output file given"
-        sys.exit(-1)
+        # create one from roosterfile name:
+        filename, extension = os.path.splitext(options.roosterfile)
+        options.icsfile = filename+".ics"
+        print "No output file given, writing output to:", options.icsfile
+        if os.path.isfile(options.icsfile):
+            print "ERROR: output file exists; specify explicitly to overwrite."
+            sys.exit(-1)
         
     # we also want to return our version, for use in other output
     version=parser.get_version()
@@ -86,7 +95,7 @@ def parse_commandline():
     del(parser)
     return options, args, version
 
-def read_vu_rooster(lines, debug=True):
+def read_vu_rooster(lines):
     entries=[]
     # split into lines
     week_lines = lines.split('\n')
@@ -154,7 +163,7 @@ def read_vu_rooster(lines, debug=True):
             if debug: print "SKIPPING (format errors)"
             continue
         # now store 
-        print "STORING", words
+        if debug: print "STORING", words
         # pad words with None's, and return a tuple of exactly 13
         # (so we always know to unpack it into 13 variables):
         entries.append( tuple(words+[None,None,None,None,None,
@@ -200,8 +209,7 @@ def day2day(day):
 
 def write_ical_event(outfile,
                      Vakcode, Dag, Begindatum, Weken, Start, Einde,
-                     Vaknaam, Beschrijving, Type, Zalen, Docent, Opmerking,
-                     debug=True):
+                     Vaknaam, Beschrijving, Type, Zalen, Docent, Opmerking):
     if debug: print "INPUT:", ( Vakcode, Dag, Begindatum, Weken,
                                 Start, Einde, Vaknaam, Beschrijving, Type,
                                 Zalen, Docent, Opmerking )
@@ -221,29 +229,27 @@ def write_ical_event(outfile,
         if debug: print "Range:", r
         weken += r
     
-    print "SCHEDULE:", weken, "-",
-    
     # get begin/end times
     start = time2minutes(Start)
     end   = time2minutes(Einde)
-    print " %s %s-%s %s" % (Dag,Start,Einde,Zalen)
-    
-    if debug: print weken
+    if debug: 
+        print "SCHEDULE:", weken, "-", \
+            " %s %s-%s %s" % (Dag,Start,Einde,Zalen)
     
     # get correct calendar year (schedule runs by academic year sept-aug)
     if weken[0] < (52+this_week-10)%52:
         year = this_year+1
     else:
         year = this_year
-    print "Processing year", year
+    if debug: print "Processing year", year
     #print Begindatum,startweek,endweek,this_week,year,date2date(Begindatum)
     #print "date conversion:", Begindatum, date2date(Begindatum), test
-    print "DATE:", "%04d%02d%02d" % date2ymd(Begindatum)
+    if debug: print "DATE:", "%04d%02d%02d" % date2ymd(Begindatum)
     starts = "%04d%02d%02dT%02d%02d00Z" % ( date2ymd(Begindatum)+time2hm(Start) )
-    print " start", starts
+    if debug: print " start", starts
     ends   = "%04d%02d%02dT%02d%02d00Z" % ( date2ymd(Begindatum)+time2hm(Einde) )
-    print " end",   ends
-    print
+    if debug: print " end",   ends
+    if debug: print
     
     # now write actual event:
     print >>outfile, "BEGIN:VEVENT"
@@ -276,10 +282,14 @@ def write_ical_event(outfile,
 ######## MAIN ##########
 
 if __name__ == "__main__":
-
+    global debug
+    
     # get commandline options and file(s)
     (options, args, version) = parse_commandline()
-    
+
+    # set debug flag
+    debug = options.debug
+        
     # ingest whole input file:
     lines = open(options.roosterfile).read()
     
@@ -290,10 +300,12 @@ if __name__ == "__main__":
     this_year=int(time.strftime("%Y", now)); # current year
     this_week=int(time.strftime("%W", now)); # current week
     
-    print "Read", len(entries), "entries from input"
+    entries_input = len(entries)
+    print "Read", entries_input, "entries from input"
     # make unique:
     entries = list(set(entries))
-    print "Now ", len(entries), "unique entries"
+    entries_unique = len(entries)
+    print "Now ", entries_unique, "unique entries"
     
     # now go through records and write out:
     print "Writing to", options.icsfile
@@ -305,11 +317,16 @@ if __name__ == "__main__":
         ( Status,Vakcode,Dag,Begindatum,Weken,Start,Einde,Vaknaam,
           Beschrijving,Type,Zalen,Docent,Opmerking ) = words
         print "PROCESSING", \
-            Vakcode, Dag, Weken, Beschrijving, Docent.split('\n')[0]
+            Vaknaam, Vakcode, Dag, Weken, Beschrijving, Docent.split('\n')[0]
         
         write_ical_event(outfile,
                          Vakcode, Dag, Begindatum, Weken, Start, Einde,
                          Vaknaam, Beschrijving, Type, Zalen, Docent, Opmerking)
     print >> outfile, "END:VCALENDAR"
 
+    print ""
+    print "Summary:"
+    print "Read", entries_input, "entries from input", options.roosterfile
+    print "Wrote", entries_unique, "unique entries to output", options.icsfile
+    
 # last line
