@@ -39,8 +39,12 @@ ics_day = {
     'su':'SU', 
     }
 
+# global stuff
 global debug
 debug=False
+
+# which column to look for (optional) groups:
+groupcol=9
 
 ######## COMMAND LINE / INPUT STUFF ##########
 
@@ -58,7 +62,7 @@ def parse_commandline():
     parser.add_option("-r", "--rooster",   dest="roosterfile", metavar="FILE",
                       help="rooster file")
     parser.set_defaults(roosterfile=None)
-    parser.add_option("-i", "--ics",   dest="icsfile", metavar="FILE",
+    parser.add_option("-o", "--ics",   dest="icsfile", metavar="FILE",
                       help="ics file")
     parser.set_defaults(icsfile=None)
     parser.add_option("-v", "--verbose", dest="debug", action="store_true",
@@ -120,14 +124,22 @@ def read_vu_rooster(lines):
             # Vakcode 	Dag 	Begindatum 	\
             # Kal.wkn 	Start 	Einde 	Vaknaam 	Beschrijving 	\
             # Type 	Zalen 	Docent 	Opmerking
+            headers = week_line.split()
             try:
-                first = week_line.split()[0].strip()
+                first = headers[0].strip()
             except IndexError:
                 if debug: print "SKIPPING (empty line)"
                 continue
             if first in ["Status", "Vakcode"]:
+                if debug: 
+                    print "Header line found:"
+                    print week_line
                 header_found=True
                 header_with_status = ( first=="Status" )
+                if not header_with_status: headers.insert(0, '')
+                header_with_group = ( headers[groupcol]=="Groep" )
+                if not header_with_group: headers.insert(groupcol, '')
+                if debug: print "header_with_group", header_with_group
                 continue
             else:
                 if debug: print "Header line not yet found"
@@ -149,8 +161,10 @@ def read_vu_rooster(lines):
         # add status column if it wasn't there:
         if not header_with_status:
             if debug: print "Adding empty status column"
-            words = [''] + words
-
+            words.insert(0, '')
+        if not header_with_group:
+            if debug: print "Adding empty group column ("+str(groupcol)+")"
+            words.insert(groupcol, '')
         # check contents:
         time_pattern = '[0-9][0-9]*:[0-9][0-9]'
         date_pattern = '[0-9][0-9]*/[0-9][0-9]*/[0-9][0-9]'
@@ -163,24 +177,28 @@ def read_vu_rooster(lines):
                      time_pattern,	# end time 15:15
                      '',		# course name free text
                      '',		# description free text
-                     '[A-Z][A-Z]']	# type PR
+                     '',                # groups free text (optional)
+                     '[A-Z][A-Z]']	# type, like HC, WC, PR
         im = min(len(patterns), len(words))
         error = False
         for i in range(im):
+            if debug:
+                print i, headers[i], patterns[i], words[i]
             if not re.match(patterns[i], words[i]):
                 if debug:
-                    print "FORMAT ERROR:", words[i], "not conform", patterns[i]
+                    print "FORMAT ERROR:", headers[i], words[i], \
+                        "not conform", patterns[i]
                 error=True
         if error: # skip this line, and continue with next
             if debug: print "SKIPPING (format errors)"
             continue
         # now store 
         if debug: print "STORING", words
-        # pad words with None's, and return a tuple of exactly 13
-        # (so we always know to unpack it into 13 variables):
+        # pad words with None's, and return a tuple of exactly 14
+        # (so we always know to unpack it into 14 variables):
         entries.append( tuple(words+[None,None,None,None,None,
                                      None,None,None,None,None,
-                                     None,None])[:13] )
+                                     None,None])[:14] )
     return entries
 
 def time2minutes(time):
@@ -219,12 +237,13 @@ def day2day(day):
     
     return ics_day.get( day.lower()[:2] )
 
-def write_ical_event(outfile,
-                     Vakcode, Dag, Begindatum, Weken, Start, Einde,
-                     Vaknaam, Beschrijving, Type, Zalen, Docent, Opmerking):
-    if debug: print "INPUT:", ( Vakcode, Dag, Begindatum, Weken,
-                                Start, Einde, Vaknaam, Beschrijving, Type,
-                                Zalen, Docent, Opmerking )
+def write_ical_event(outfile, this_week, this_year, 
+                     Vakcode, Dag, Begindatum, Weken, 
+                     Start, Einde, Vaknaam, Beschrijving, 
+                     Groep, Type, Zalen, Docent, Opmerking):
+    if debug: print "INPUT:", ( Vakcode, Dag, Begindatum, Weken, 
+                                Start, Einde, Vaknaam, Beschrijving, 
+                                Groep, Type, Zalen, Docent, Opmerking )
     # check for weeks, can be 31-42 or '31-42, 44'
     if debug: print Weken
     week_parts = Weken.split(', ')
@@ -268,7 +287,10 @@ def write_ical_event(outfile,
     if Vaknaam=="":
         Vaknaam = Beschrijving
         Beschrijving = None
-    print >>outfile, "SUMMARY:%s (%s)"  % ( Vaknaam, Type )
+    summary="SUMMARY:%s"  % ( Vaknaam )
+    if Groep: summary+=" - "+Groep
+    summary+=" (%s)"  % ( Type )
+    print >>outfile, summary
     print >>outfile, "LOCATION:%s" % ( Zalen )
     descs=[]
     if Vaknaam:      descs.append(Vaknaam)
@@ -290,6 +312,67 @@ def write_ical_event(outfile,
             ( count, day2day(Dag) )
     print >>outfile, "END:VEVENT"
 
+def make_unique(entries):
+    ''' remove duplicate entries, and collaps ones with different groups'''
+    
+    # first make set (removes duplicates from list):
+    print "Starting with", len(entries), "entries"
+    entries = list(set(entries))
+    print "Now", len(entries), "unique entries"
+
+    # now check without groups:
+    entryd={}
+    order=[]
+    for entry in entries:
+        Groep=entry[groupcol]
+        key=list(entry)
+        key[groupcol]=''
+        key=tuple(key)
+        order.append(key)
+        if key in entryd: entryd[key]+=', '+Groep
+        else: entryd[key]=Groep
+            
+    # remove duplicates from order:
+    order = list(set(order))
+    new_entries=[]
+    for key in order:
+        entry=list(key)
+        entry[groupcol]=entryd[key]
+        new_entries.append(tuple(entry))
+        
+    print "Now", len(new_entries), "entries with groups collapsed"
+    
+    return new_entries
+
+
+def write_ics_entries(outfile, entries):
+    ''' write out calendar <entries> as ICS events to <outfile> '''
+    
+    now=time.localtime(); # we get the current time once, to prevent 'shifts'
+    this_year=int(time.strftime("%Y", now)); # current year
+    this_week=int(time.strftime("%W", now)); # current week
+    
+    # make unique:
+    entries = make_unique(entries)
+    entries_unique = len(entries)
+    print "Now", entries_unique, "unique entries"
+    
+    print >> outfile, "BEGIN:VCALENDAR"
+    for words in entries:
+        # get fields:
+        #print "PROCESSING", words
+        ( Status, Vakcode, Dag, Begindatum, Weken, Start, Einde, Vaknaam,
+          Beschrijving, Groep, Type, Zalen, Docent, Opmerking ) = words
+        print "PROCESSING", \
+            Vaknaam, Vakcode, Dag, Weken, Beschrijving, Docent.split('\n')[0]
+        
+        write_ical_event(outfile, this_week, this_year, 
+                         Vakcode, Dag, Begindatum, Weken, 
+                         Start, Einde, Vaknaam, Beschrijving, 
+                         Groep, Type, Zalen, Docent, Opmerking)
+    print >> outfile, "END:VCALENDAR"
+    return entries_unique
+
 
 ######## MAIN ##########
 
@@ -308,37 +391,17 @@ if __name__ == "__main__":
     # create list to story rooster entries from roosterfile:
     entries = read_vu_rooster(lines)
     
-    now=time.localtime(); # we get the current time once, to prevent 'shifts'
-    this_year=int(time.strftime("%Y", now)); # current year
-    this_week=int(time.strftime("%W", now)); # current week
-    
     entries_input = len(entries)
     print "Read", entries_input, "entries from input"
-    # make unique:
-    entries = list(set(entries))
-    entries_unique = len(entries)
-    print "Now ", entries_unique, "unique entries"
     
     # now go through records and write out:
     print "Writing to", options.icsfile
     outfile = open(options.icsfile, 'w')
-    print >> outfile, "BEGIN:VCALENDAR"
-    for words in entries:
-        # get fields:
-        #print "PROCESSING", words
-        ( Status,Vakcode,Dag,Begindatum,Weken,Start,Einde,Vaknaam,
-          Beschrijving,Type,Zalen,Docent,Opmerking ) = words
-        print "PROCESSING", \
-            Vaknaam, Vakcode, Dag, Weken, Beschrijving, Docent.split('\n')[0]
-        
-        write_ical_event(outfile,
-                         Vakcode, Dag, Begindatum, Weken, Start, Einde,
-                         Vaknaam, Beschrijving, Type, Zalen, Docent, Opmerking)
-    print >> outfile, "END:VCALENDAR"
+    entries_unique = write_ics_entries(outfile, entries)
 
     print ""
     print "Summary:"
-    print "Read", entries_input, "entries from input", options.roosterfile
-    print "Wrote", entries_unique, "unique entries to output", options.icsfile
+    print "Read", entries_input, "entries from", options.roosterfile
+    print "Wrote", entries_unique, "unique entries to", options.icsfile
     
 # last line
