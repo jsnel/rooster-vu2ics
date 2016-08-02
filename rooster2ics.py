@@ -21,31 +21,13 @@ from optparse import OptionParser, OptionGroup
 
 ######## globals #########
 
-# to convert day names to ics standards
-ics_day = { 
-    'ma':'MO', 
-    'di':'TU', 
-    'wo':'WE', 
-    'do':'TH', 
-    'vr':'FR', 
-    'za':'SA', 
-    'zo':'SU', 
-    'mo':'MO', 
-    'tu':'TU', 
-    'we':'WE', 
-    'th':'TH', 
-    'fr':'FR', 
-    'sa':'SA', 
-    'su':'SU', 
-    }
-
 # global stuff
 global debug
 debug=False
 
 # which column to look for (optional) groups:
 groupcol=9
-
+    
 ######## COMMAND LINE / INPUT STUFF ##########
 
 def parse_commandline():
@@ -112,13 +94,44 @@ def parse_commandline():
     return options, args, version
 
 def read_vu_rooster(lines):
+    ''' does the heavy lifting of deciphering the idiosyncratic VU
+    formatted schedule (rooster) table. '''
+    
+    # constants:
+    weekdays = [ 'maandag', 'dinsdag', 'woensdag', 'donderdag', 'vrijdag',
+                 'monday', 'tuesday', 'wednesday', 'thursday', 'friday' ]
+    # which column to look for day of week (optional):
+    weekdaycol = 2
+    # how to recognize times and dates:
+    time_pattern = '[0-9][0-9]*:[0-9][0-9]'
+    date_pattern = '[0-9][0-9]*/[0-9][0-9]*/[0-9][0-9]'
+    # format checking for each column:
+    patterns = [ '',		# status (usually empty)
+                 '[A-Z0-9_]*',	# course code X_405052
+                 '([A-Z]|)[a-z][a-z]', # weekday, like 'di' or 'Tue' (opt.)
+                 date_pattern,	# date 3/9/13
+                 '[0-9, -]*',	# week numbers 36-42, 44
+                 time_pattern,	# start time 13:30
+                 time_pattern,	# end time 15:15
+                 '',		# course name free text
+                 '',		# description free text
+                 '',            # groups free text (optional)
+                 '[A-Z][A-Z]']	# type, like HC, WC, PR
+
     entries=[]
     # split into lines
     week_lines = lines.split('\n')
     if debug: print "week_lines", len(week_lines)
     # first skip till we find a proper header line:
     header_found=False
+    have_weekday_line=False
     for week_line in week_lines:
+        # look for weekday lines:
+        word = week_line.strip().lower()
+        if word in weekdays:
+            weekday = word
+            have_weekday_line = True
+            if debug: print "Weekday line found:", weekday
         if not header_found:
             # check for column header line at start
             # Vakcode 	Dag 	Begindatum 	\
@@ -137,8 +150,9 @@ def read_vu_rooster(lines):
                 header_found=True
                 header_with_status = ( first=="Status" )
                 if not header_with_status: headers.insert(0, '')
+                if have_weekday_line: headers.insert(weekdaycol, "Dag")
                 header_with_group = ( headers[groupcol]=="Groep" )
-                if not header_with_group: headers.insert(groupcol, '')
+                if not header_with_group: headers.insert(groupcol, "Groep")
                 if debug: print "header_with_group", header_with_group
                 continue
             else:
@@ -162,23 +176,14 @@ def read_vu_rooster(lines):
         if not header_with_status:
             if debug: print "Adding empty status column"
             words.insert(0, '')
+        if have_weekday_line:
+            if debug: print "Adding weekday column (%d): %s" % \
+               ( weekdaycol, weekday )
+            words.insert(weekdaycol, weekday)
         if not header_with_group:
-            if debug: print "Adding empty group column ("+str(groupcol)+")"
+            if debug: print "Adding empty group column (%d)" % groupcol
             words.insert(groupcol, '')
         # check contents:
-        time_pattern = '[0-9][0-9]*:[0-9][0-9]'
-        date_pattern = '[0-9][0-9]*/[0-9][0-9]*/[0-9][0-9]'
-        patterns = [ '',		# status (usually empty)
-                     '[A-Z0-9_]*',	# course code X_405052
-                     '([A-Z]|)[a-z][a-z]', # weekday, like 'di' or 'Tue'
-                     date_pattern,	# date 3/9/13
-                     '[0-9, -]*',	# week numbers 36-42, 44
-                     time_pattern,	# start time 13:30
-                     time_pattern,	# end time 15:15
-                     '',		# course name free text
-                     '',		# description free text
-                     '',                # groups free text (optional)
-                     '[A-Z][A-Z]']	# type, like HC, WC, PR
         im = min(len(patterns), len(words))
         error = False
         for i in range(im):
@@ -234,6 +239,24 @@ def date2ymd(date):
 
 def day2day(day):
     ''' translates day of week name into ics standard names'''
+    
+    # to convert day names to ics standards
+    ics_day = { 
+        'ma':'MO', 
+        'di':'TU', 
+        'wo':'WE', 
+        'do':'TH', 
+        'vr':'FR', 
+        'za':'SA', 
+        'zo':'SU', 
+        'mo':'MO', 
+        'tu':'TU', 
+        'we':'WE', 
+        'th':'TH', 
+        'fr':'FR', 
+        'sa':'SA', 
+        'su':'SU', 
+    }
     
     return ics_day.get( day.lower()[:2] )
 
